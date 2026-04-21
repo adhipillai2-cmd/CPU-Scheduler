@@ -25,5 +25,5 @@ def generate_controlled_workload(num_tasks):
 
 if __name__ == "__main__":
     # You can take the limit as a command line argument or hardcode it
-    limit = 50 
+    limit = 100 
     generate_controlled_workload(limit)
