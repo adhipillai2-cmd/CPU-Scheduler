@@ -92,7 +92,19 @@ private:
         while (cin && cin.peek() != EOF) {
             string line;
             if (getline(cin, line)) {
+
                 if (line.empty()) continue;
+
+                if (line.find("CARBON") != string::npos) {
+                    stringstream ss(line);
+                    string tag;
+                    double intensity;
+                    if (ss >> tag >> intensity) {
+                        this -> currentCarbonIntensity = intensity;
+                    }
+                    continue;
+                }
+
                 stringstream ss(line);
                 int id, arr, burst, dl, mem;
                 double pwr;
