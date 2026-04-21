@@ -10,7 +10,9 @@ using namespace std;
 enum processState {
     READY, 
     RUNNING, 
-    TERMINATED
+    TERMINATED,
+    HOLD,
+    THROTTLED
 };
 
 //main class for process
@@ -25,6 +27,11 @@ private:
     int remainingTime; //time left for process to complete
     processState state; //current state of the process
     int waitingTime; //total time process has waited
+    int deadline; //deadline for when task needs to finish
+    float powerDraw; //amount of power the process draws while running
+    int memoryUsage; //the amount of memory this process will take from the datacenter while running
+
+
 
 
 public:
