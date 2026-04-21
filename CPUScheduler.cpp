@@ -3,6 +3,10 @@
 #include <fstream>
 #include <string>
 #include <queue>
+#include <memory>
+#include <deque>
+#include <sstream>
+#include <thread>
 
 using namespace std;
 
@@ -68,6 +72,10 @@ public:
         return waitingTime;
     }
 
+    float getPowerDraw() const {
+        return powerDraw;
+    }
+
     //checks if process is finished
     bool isFinished()  const {
         return remainingTime <= 0;
@@ -100,9 +108,10 @@ public:
     class Scheduler {
     //private variables/vectors for allProcesses and readyQueue
     private:
-        vector<Process> allProcesses; //list of processes to schedule
+        
+        std::vector<std::shared_ptr<Process>> allProcesses; //list of processes to schedule
 
-        vector<Process*> readyQueue; //queue of processes ready to run
+        std::deque<std::shared_ptr<Process>> readyQueue; //queue of processes ready to run
 
         //variables
         int globalTime; //current time in the scheduling simulation
@@ -116,7 +125,38 @@ public:
             globalTime = 0;
 
         }
-        //loads processes from a file, in this its processes.txt
+        //loads processes from a file, in this its processes.
+        void checkForNewTasks(){
+            while (std::cin && std::cin.peek() != EOF) {
+                std::string line;
+                if (std::getline(std::cin, line)) {
+                    if (line.empty()) continue;
+
+                    std::stringstream ss(line);
+                    int id, arrival, burst, deadline, power, memory;
+                    
+                    if (ss >> id >> arrival >> burst >> deadline >> power >> memory) {
+                        // Create a shared_ptr managed process
+                        auto newProcess = std::make_shared<Process>(
+                            id, arrival, burst, deadline, power, memory
+                        );
+                        
+                        allProcesses.push_back(newProcess);
+                        std::cout << "[Time " << globalTime << "] Task " << id 
+                                << " ingested from live stream." << std::endl;
+                    }
+                }
+                
+                // After reading one line, peek again to see if more are waiting.
+                // If the pipe is empty, we break to let the simulation clock tick.
+                if (std::cin.peek() == EOF || std::cin.rdbuf()->in_avail() == 0) {
+                    break;
+                }
+            }
+        }
+        /*
+        
+        
         void loadProcessesFromFile(string filename) { 
             ifstream file(filename);
             //checks if file opens correctly
@@ -136,67 +176,67 @@ public:
             //informs that the file was loaded correctly, and displays number of processes loaded
             cout <<"Loaded " << allProcesses.size() << " processes from " << filename << endl;
         }
+            */
+
+
 
         //runs the scheduling simulation
-        void runSimulation(){
+
+        void runSimulation() {
             int completedProcesses = 0;
+            bool streamActive = true;
 
-            //add processes that have arrived to the ready queue
-            vector<bool> isProcessInQueue(allProcesses.size(), false);
+            // Condition: Continue if the pipe is open OR there is work left to do
+            while (streamActive || !readyQueue.empty()) {
+                
+                // 1. NON-BLOCKING INGESTION
+                // Instead of a static vector, we poll the live feed every iteration
+                if (streamActive) { checkForNewTasks(); }
 
-            //main loop to run scheduling simulation until all tasks are completed
-            while (completedProcesses < allProcesses.size()) {
-
-                //loops through all processes
-                for (int i = 0; i < allProcesses.size(); ++i) {
-                    //checks if process has arrived and is not already in the ready queue
-                    //then adds it to the ready queue through address pointers
-                    if (allProcesses[i].getArrivalTime() <= globalTime && isProcessInQueue[i] == false) {
-                        readyQueue.push_back(&allProcesses[i]);
-                        //marks process as being in the ready queue
-                        isProcessInQueue[i] = true;
-                        cout << "Time " << globalTime << ": Process " << allProcesses[i].getProcessID() << " arrived." << endl;
+                // 2. DISPATCH LOGIC
+                if (readyQueue.empty()) {
+                    if (streamActive) {
+                        globalTime++; // Clock keeps ticking while waiting for input
+                        std::this_thread::sleep_for(std::chrono::milliseconds(1)); 
+                        continue;
+                    } else {
+                        break; // Stream closed and queue empty
                     }
                 }
 
-                //if ready queue is empty, increment global time and continue
-                if (readyQueue.empty()){
-                    globalTime++;
-                    continue;
-                }
+                // 3. SMART POINTER DISPATCH (O(1))
+                // Replace raw pointer erasures with deque pop_front
+                std::shared_ptr<Process> current = readyQueue.front();
+                readyQueue.pop_front();
 
-                //gets the next process from the ready queue
-                Process* currentProcess = readyQueue.front();
-                readyQueue.erase(readyQueue.begin());
+                // 4. POWER-AWARE EXECUTION
+                int slice = std::min(timeQuantum, current->getRemainingTime());
+                current->execute(slice);
                 
-                //calculate how long to run
-                int timeSlice = timeQuantum;
-                if (currentProcess->getRemainingTime() < timeQuantum) {
-                    timeSlice = currentProcess->getRemainingTime();
+                // Energy tracking: You'll need to store this in your ledger vector
+                double currentEnergy = current->getPowerDraw() * slice;
+                
+                globalTime += slice;
+
+                // 5. UPDATE WAIT TIMES & REQUEUE
+                // Your current for-loop for waitingTime remains valid logic, 
+                // but must use smart pointers.
+                for (auto& p : readyQueue) {
+                    p->updateWaitingTime(slice);
                 }
 
-                //execute the current process for the calculated time slice
-                currentProcess->execute(timeSlice);
-                globalTime += timeSlice;
-
-
-                // Loop through everyone currently in the line
-                for (int i = 0; i < readyQueue.size(); i++) {
-                    // readyQueue[i] is a pointer so ->
-                    readyQueue[i]->updateWaitingTime(timeSlice);
-                }
-
-                //check if current process is finished
-                if (currentProcess->isFinished()) {
+                if (current->isFinished()) {
                     completedProcesses++;
-                    cout << "Time " << globalTime << ": Process " << currentProcess->getProcessID() << " finished." << endl;
-                } 
-                else 
-                {
-                    readyQueue.push_back(currentProcess);
+                    std::cout << "Time " << globalTime << ": Task " << current->getProcessID() << " finished." << std::endl;
+                } else {
+                    readyQueue.push_back(current);
                 }
             }
-        };
+        }
+
+        /*
+        
+        
         
         //prints the final statistics of the scheduling simulation
         void printStatistics() {
@@ -226,6 +266,12 @@ public:
             cout << "Average Waiting Time: " << (totalWait / allProcesses.size()) << " ms" << endl;
             cout << "Average Turnaround Time: " << (totalTurnaround / allProcesses.size()) << " ms" << endl;
         }
+
+        */
+
+        /*
+        
+        
 
         void fileUpdater(){
             //asks user if they want to update the processes texgt file
@@ -272,31 +318,22 @@ public:
             file.close();
             cout << "File update complete.\n" << endl;
         }
+            
     }
+    */
 };
 
+int main(int argc, char* argv[]) {
+    // Default quantum or take from command line for automation
+    int quantum = 100; 
+    if (argc > 1) {
+        quantum = std::stoi(argv[1]);
+    }
 
-int main() {
-    int quantum;
-    
-    
-    //gets the Time Quantum from the user
-    cout << "Enter Time Quantum: ";
-    cin >> quantum;
-
-    //creates the Scheduler Object
     Scheduler cpu(quantum);
     
-    //asks user if they want to update the process file
-    cpu.fileUpdater();
-
-    cpu.loadProcessesFromFile("processes.txt");
-
-    //runs the Simulation
+    // The simulation now starts immediately without asking for file updates
     cpu.runSimulation();
-
-    //prints the final statistics
-    cpu.printStatistics();
 
     return 0;
 }
