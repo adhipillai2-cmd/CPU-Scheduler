@@ -2,6 +2,7 @@ import subprocess
 import threading
 import sys
 import queue
+import time
 
 def stream_to_queue(process_stdout, data_queue, prefix=""):
     """Reads lines from a subprocess and puts them into a queue."""
@@ -29,10 +30,13 @@ def main():
     threading.Thread(target=stream_to_queue, args=(gen_proc.stdout, input_queue, ""), daemon=True).start()
     threading.Thread(target=stream_to_queue, args=(tele_proc.stdout, input_queue, ""), daemon=True).start()
 
+    output_queue = queue.Queue()
+
+    threading.Thread(target=stream_to_queue, args=(cpp_proc.stdout, output_queue, ""), daemon=True).start()
+
     try:
-        # Loop to pipe merged data into C++ and C++ output into Visualizer
         while True:
-            # Check for data to send to C++
+            # 1. Feed the Brain (C++ Input)
             try:
                 data_in = input_queue.get_nowait()
                 cpp_proc.stdin.write(data_in + "\n")
@@ -40,15 +44,17 @@ def main():
             except queue.Empty:
                 pass
 
-            # Check for data coming out of C++ to send to Visualizer
-            cpp_output = cpp_proc.stdout.readline()
-            if cpp_output:
-                vis_proc.stdin.write(cpp_output)
+            # 2. Feed the Sink (Visualizer Input)
+            try:
+                # Get data from the C++ output queue
+                cpp_data = output_queue.get_nowait()
+                vis_proc.stdin.write(cpp_data + "\n")
                 vis_proc.stdin.flush()
+            except queue.Empty:
+                pass
 
-            # Exit if the C++ process terminates
-            if cpp_proc.poll() is not None:
-                break
+            # 3. Prevent 100% CPU usage
+            time.sleep(0.01)
 
     except KeyboardInterrupt:
         print("\nShutting down GreenCompute system...")
@@ -59,4 +65,4 @@ def main():
         vis_proc.terminate()
 
 if __name__ == "__main__":
-    main()
+    main()  
